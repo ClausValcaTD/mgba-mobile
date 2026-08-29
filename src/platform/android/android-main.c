@@ -7,6 +7,7 @@
 #include <android/log.h>
 
 #include "../sdl/main.h"
+#include "overlay/virtual_buttons.h"
 
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
@@ -25,12 +26,13 @@
 #define PORT "sdl"
 #define LOG_TAG "mGBAMobile"
 
-static void mSDLDeinit(struct mSDLRenderer* renderer);
+extern char romPath[512];
 
+static void mSDLDeinit(struct mSDLRenderer* renderer);
 static int mSDLRun(struct mSDLRenderer* renderer, const char* romPath);
+static void mAndroidRunloop(struct mSDLRenderer* renderer, void* user);
 
 static struct mStandardLogger _logger;
-
 static struct VFile* _state = NULL;
 
 UNUSED static void _loadState(struct mCoreThread* thread) {
@@ -55,11 +57,14 @@ int main(int argc, char** argv) {
 		.logLevel = mLOG_WARN | mLOG_ERROR | mLOG_FATAL,
 	};
 
-	const char* romPath = "/sdcard/mgba/rom.gba";
-
 	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
 		__android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Could not initialize video: %s", SDL_GetError());
 		return 1;
+	}
+
+	// Wait for romPath to be set by JNI before proceeding
+	while (romPath[0] == '\0') {
+		SDL_Delay(100);
 	}
 
 	renderer.core = mCoreFind(romPath);
@@ -98,6 +103,7 @@ int main(int argc, char** argv) {
 	renderer.filter = renderer.core->opts.resampleVideo;
 
 	mSDLSWCreate(&renderer);
+	renderer.runloop = mAndroidRunloop;
 
 	if (!renderer.init(&renderer)) {
 		mCoreConfigDeinit(&renderer.core->config);
@@ -130,6 +136,57 @@ int main(int argc, char** argv) {
 	renderer.core->deinit(renderer.core);
 
 	return ret;
+}
+
+static void mAndroidRunloop(struct mSDLRenderer* renderer, void* user) {
+	struct mCoreThread* context = user;
+	SDL_Event event;
+
+	size_t numButtons = sizeof(gbaButtons) / sizeof(gbaButtons[0]);
+
+	while (mCoreThreadIsActive(context)) {
+		while (SDL_PollEvent(&event)) {
+			if (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERUP) {
+				int winW = renderer->viewportWidth;
+				int winH = renderer->viewportHeight;
+				if (renderer->window) {
+					SDL_GetWindowSize(renderer->window, &winW, &winH);
+				}
+				int touchX = (int)(event.tfinger.x * (event.tfinger.x <= 1.0f ? winW : 1));
+				int touchY = (int)(event.tfinger.y * (event.tfinger.y <= 1.0f ? winH : 1));
+
+				for (size_t i = 0; i < numButtons; ++i) {
+					SDL_Rect r = gbaButtons[i].rect;
+					if (touchX >= r.x && touchX <= r.x + r.w && touchY >= r.y && touchY <= r.y + r.h) {
+						if (event.type == SDL_FINGERDOWN) {
+							context->core->addKeys(context->core, 1 << gbaButtons[i].gbaKey);
+						} else {
+							context->core->clearKeys(context->core, 1 << gbaButtons[i].gbaKey);
+						}
+					}
+				}
+			}
+			mSDLHandleEvent(context, &renderer->player, &event);
+		}
+
+		if (mCoreSyncWaitFrameStart(&context->impl->sync)) {
+			SDL_UnlockTexture(renderer->sdlTex);
+			SDL_RenderCopy(renderer->sdlRenderer, renderer->sdlTex, 0, 0);
+
+			// Draw virtual buttons overlay with 120 alpha
+			SDL_SetRenderDrawBlendMode(renderer->sdlRenderer, SDL_BLENDMODE_BLEND);
+			for (size_t i = 0; i < numButtons; ++i) {
+				SDL_SetRenderDrawColor(renderer->sdlRenderer, 200, 200, 200, 120);
+				SDL_RenderFillRect(renderer->sdlRenderer, &gbaButtons[i].rect);
+			}
+
+			SDL_RenderPresent(renderer->sdlRenderer);
+			int stride;
+			SDL_LockTexture(renderer->sdlTex, 0, (void**) &renderer->outputBuffer, &stride);
+			renderer->core->setVideoBuffer(renderer->core, renderer->outputBuffer, stride / BYTES_PER_PIXEL);
+		}
+		mCoreSyncWaitFrameEnd(&context->impl->sync);
+	}
 }
 
 int mSDLRun(struct mSDLRenderer* renderer, const char* romPath) {
