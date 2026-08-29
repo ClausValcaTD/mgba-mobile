@@ -1,4 +1,4 @@
-package com.mgbamobile
+package com.m5dev.mgbamobile
 
 import org.libsdl.app.SDLActivity
 

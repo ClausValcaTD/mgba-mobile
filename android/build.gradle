@@ -23,7 +23,7 @@ android {
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.mgbamobile"
+        applicationId "com.m5dev.mgbamobile"
         minSdk 24
         targetSdk 34
         versionCode 1
