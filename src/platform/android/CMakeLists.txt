@@ -10,7 +10,7 @@ find_package(SDL2 REQUIRED)
 include_directories(${SDL2_INCLUDE_DIRS})
 
 # Compile android-main.c as shared library or executable for Android platform
-add_library(mgba-mobile SHARED android-main.c)
+add_library(mgba-mobile SHARED android-main.c android-jni.c)
 
 # Link libraries: mgba SDL2 android log
 target_link_libraries(mgba-mobile mgba ${SDL2_LIBRARIES} android log)
