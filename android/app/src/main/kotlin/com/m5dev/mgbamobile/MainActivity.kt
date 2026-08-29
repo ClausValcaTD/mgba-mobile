@@ -76,7 +76,8 @@ class MainActivity : SDLActivity() {
 
     private fun isValidExtension(fileName: String): Boolean {
         val lower = fileName.lowercase()
-        return lower.endsWith(".gba") || lower.endsWith(".gb") || lower.endsWith(".gbc")
+        return lower.endsWith(".gba") || lower.endsWith(".gb") || lower.endsWith(".gbc") ||
+                lower.endsWith(".zip") || lower.endsWith(".7z")
     }
 
     private fun copyUriToCacheAndLoad(uri: Uri) {
