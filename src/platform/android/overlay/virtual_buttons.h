@@ -10,7 +10,7 @@ typedef struct {
     int gbaKey;
 } VirtualButton;
 
-VirtualButton gbaButtons[] = {
+static const VirtualButton gbaButtons[] = {
     // D-Pad
     { {20, 300, 60, 60}, "UP",     GBA_KEY_UP    },
     { {20, 420, 60, 60}, "DOWN",   GBA_KEY_DOWN  },
