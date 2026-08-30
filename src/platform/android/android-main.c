@@ -33,9 +33,9 @@ static int mSDLRun(struct mSDLRenderer* renderer, const char* romPath);
 static void mAndroidRunloop(struct mSDLRenderer* renderer, void* user);
 
 static struct mStandardLogger _logger;
-static struct VFile* _state = NULL;
+ATTRIBUTE_UNUSED static struct VFile* _state = NULL;
 
-UNUSED static void _loadState(struct mCoreThread* thread) {
+ATTRIBUTE_UNUSED static void _loadState(struct mCoreThread* thread) {
 	mCoreLoadStateNamed(thread->core, _state, SAVESTATE_RTC);
 }
 
