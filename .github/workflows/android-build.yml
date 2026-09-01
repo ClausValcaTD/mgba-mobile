@@ -66,6 +66,16 @@ jobs:
           restore-keys: |
             gradle-
 
+      - name: Add SDL2 submodule
+        run: |
+           git submodule add --depth 1 \
+           --branch release-2.28.5 \
+           https://github.com/libsdl-org/SDL \
+           third_party/SDL2
+           git -c user.email="ci@github" \
+           -c user.name="CI" \
+           commit -m "Add SDL2 submodule [skip ci]"
+
       # Step 7: Set version
       - name: Set Version
         id: set_version
