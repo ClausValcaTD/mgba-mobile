@@ -25,7 +25,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # Step 1: Checkout repository with recursive submodules
+      # Step 1: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -66,17 +66,21 @@ jobs:
           restore-keys: |
             gradle-
 
+      # Step 7: Add SDL2 submodule
       - name: Add SDL2 submodule
         run: |
-           git submodule add --depth 1 \
-           --branch release-2.28.5 \
-           https://github.com/libsdl-org/SDL \
-           third_party/SDL2
-           git -c user.email="ci@github" \
-           -c user.name="CI" \
-           commit -m "Add SDL2 submodule [skip ci]"
+          git submodule add --depth 1 \
+            https://github.com/libsdl-org/SDL \
+            third_party/SDL2
+          cd third_party/SDL2
+          git fetch --tags
+          git checkout SDL2-2.28.5
+          cd ../..
+          git -c user.email="ci@github" \
+              -c user.name="CI" \
+              commit -m "Add SDL2 submodule [skip ci]"
 
-      # Step 7: Set version
+      # Step 8: Set version
       - name: Set Version
         id: set_version
         run: |
@@ -90,7 +94,7 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Step 8: Generate Gradle wrapper + Build APK
+      # Step 9: Build APK
       - name: Build APK
         working-directory: android
         run: |
@@ -111,7 +115,7 @@ jobs:
             ./gradlew assembleRelease
           fi
 
-      # Step 9: Upload APK artifact
+      # Step 10: Upload APK artifact
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -119,7 +123,7 @@ jobs:
           path: android/app/build/outputs/apk/
           retention-days: 7
 
-      # Step 10: Create GitHub Release on tag
+      # Step 11: Create GitHub Release on tag
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
