@@ -11,11 +11,15 @@ add_subdirectory(
   SDL2-build
 )
 
-# Include directories
-include_directories(third_party/SDL2/include)
-
 # Compile android-main.c as shared library or executable for Android platform
 add_library(mgba-mobile SHARED android-main.c android-jni.c)
+
+# Include mGBA source directories
+target_include_directories(mgba-mobile PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+    third_party/SDL2/include
+)
 
 # Link libraries: mgba SDL2 android log
 target_link_libraries(mgba-mobile mgba SDL2 android log)
