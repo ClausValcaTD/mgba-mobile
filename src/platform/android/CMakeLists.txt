@@ -1,21 +1,20 @@
 cmake_minimum_required(VERSION 3.22)
-
 project(mGBAMobile)
 
 set(ANDROID_NATIVE_API_LEVEL 24)
-
 set(MGBA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 
-# Build SDL2
-add_subdirectory(
-    ${MGBA_ROOT}/third_party/SDL2
-    SDL2-build
-)
-
-# Build mGBA core
-set(MGBA_DISABLE_FRONTENDS ON CACHE BOOL "" FORCE)
+# Disable features not available on Android NDK
+set(USE_SQLITE3 OFF CACHE BOOL "" FORCE)
+set(USE_DISCORD_RPC OFF CACHE BOOL "" FORCE)
 set(BUILD_SDL OFF CACHE BOOL "" FORCE)
 set(BUILD_QT OFF CACHE BOOL "" FORCE)
+set(MGBA_DISABLE_FRONTENDS ON CACHE BOOL "" FORCE)
+
+# Build SDL2
+add_subdirectory(${MGBA_ROOT}/third_party/SDL2 SDL2-build)
+
+# Build mGBA core
 add_subdirectory(${MGBA_ROOT} mgba-core-build)
 
 # Our Android library
@@ -32,9 +31,4 @@ target_include_directories(mgba-mobile PRIVATE
     ${MGBA_ROOT}/third_party/SDL2/include
 )
 
-target_link_libraries(mgba-mobile
-    mgba
-    SDL2
-    android
-    log
-)
+target_link_libraries(mgba-mobile mgba SDL2 android log)
