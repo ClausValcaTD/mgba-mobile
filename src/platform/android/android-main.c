@@ -5,13 +5,10 @@
 #include <string.h>
 #include <time.h>
 
-// Replace SDL_Rect with this — identical memory layout
-typedef struct { int x, y, w, h; } SDL_Rect;
-
 #include <mgba/core/core.h>
 #include <mgba/core/thread.h>
 #include <mgba/core/serialize.h>
-#include <mgba/core/blip_buf.h>
+#include "util/audio/blip_buf.h"
 #include <mgba/internal/gba/input.h>
 #include <aaudio/AAudio.h>
 
