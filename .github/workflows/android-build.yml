@@ -71,10 +71,20 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate Gradle wrapper
+        working-directory: android
+        run: |
+          gradle wrapper --gradle-version 8.9
+          chmod +x ./gradlew
+
       - name: Build APK
         working-directory: android
         run: |
-          chmod +x ./gradlew
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             BUILD_TYPE="${{ inputs.build_type }}"
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
