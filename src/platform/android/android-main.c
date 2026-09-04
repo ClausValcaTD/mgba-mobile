@@ -33,6 +33,10 @@ static aaudio_data_callback_result_t audioCallback(
         AAudioStream* stream, void* userData,
         void* audioData, int32_t numFrames) {
     struct mCore* core = (struct mCore*)userData;
+    if (!core) {
+        memset(audioData, 0, numFrames * 2 * sizeof(int16_t));
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
     struct mAudioBuffer* audioBuf = core->getAudioBuffer(core);
     if (audioBuf) {
         size_t available = mAudioBufferAvailable(audioBuf);
@@ -137,7 +141,12 @@ int emulatorMain(void) {
     int winH = ANativeWindow_getHeight(nativeWindow);
     ANativeWindow_setBuffersGeometry(nativeWindow, winW, winH, WINDOW_FORMAT_RGBX_8888);
 
-    mCoreLoadFile(core, romPath);
+    if (!mCoreLoadFile(core, romPath)) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Failed to load ROM: %s", romPath);
+        core->deinit(core);
+        free(pixelBuf);
+        return 1;
+    }
     mCoreAutoloadSave(core);
 
     initAudio(core);

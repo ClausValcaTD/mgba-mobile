@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     private lateinit var surfaceView: SurfaceView
     private var cachedRom: File? = null
+    private var statusText: android.widget.TextView? = null
 
     private val pickRom = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -30,11 +31,30 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // Root layout: SurfaceView + overlay text
+        val root = android.widget.FrameLayout(this)
+
         surfaceView = SurfaceView(this)
         surfaceView.holder.addCallback(this)
-        setContentView(surfaceView)
+        root.addView(surfaceView, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
 
-        // Open picker immediately on launch
+        val tv = android.widget.TextView(this).apply {
+            text = "مرحباً بك في mGBA Mobile\nاضغط هنا لاختيار ROM"
+            textSize = 20f
+            setTextColor(android.graphics.Color.WHITE)
+            gravity = android.view.Gravity.CENTER
+            setOnClickListener { pickRom.launch(arrayOf("*/*")) }
+        }
+        statusText = tv
+        root.addView(tv, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        setContentView(root)
         pickRom.launch(arrayOf("*/*"))
     }
 
@@ -45,6 +65,7 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
                 dest.outputStream().use { output -> input.copyTo(output) }
             }
             cachedRom = dest
+            runOnUiThread { statusText?.visibility = android.view.View.GONE }
             loadROM(dest.absolutePath)
         }.start()
     }
