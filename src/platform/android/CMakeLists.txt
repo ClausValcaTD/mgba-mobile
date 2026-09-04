@@ -8,14 +8,21 @@ set(USE_LZMA ON)
 set(ENABLE_VFS ON)
 set(ENABLE_DIRECTORIES ON)
 
+# Pull in the mGBA core library from repo root
+add_subdirectory(
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../..
+    mgba-core-build
+)
+
 add_library(mgba-mobile SHARED
     android-main.c
     android-jni.c
 )
 
 target_include_directories(mgba-mobile PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../src
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 # No SDL. ANativeWindow + AAudio come free with the NDK via 'android' and 'aaudio'
