@@ -1,255 +1,166 @@
-/* Copyright (c) 2013-2015 Jeffrey Pfau
- *
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 #include <android/log.h>
+#include <android/native_window.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
-#include "../sdl/main.h"
-#include "overlay/virtual_buttons.h"
+// Replace SDL_Rect with this — identical memory layout
+typedef struct { int x, y, w, h; } SDL_Rect;
 
 #include <mgba/core/core.h>
-#include <mgba/core/config.h>
-#include <mgba/core/input.h>
-#include <mgba/core/serialize.h>
 #include <mgba/core/thread.h>
+#include <mgba/core/serialize.h>
 #include <mgba/internal/gba/input.h>
+#include <aaudio/AAudio.h>
 
-#include <mgba-util/vfs.h>
+#include "overlay/virtual_buttons.h"
 
-#include <SDL.h>
+#define LOG_TAG  "mGBAMobileMain"
+#define GBA_W    240
+#define GBA_H    160
 
-#include <errno.h>
-#include <signal.h>
+// Defined in android-jni.c
+extern char            romPath[512];
+extern ANativeWindow*  nativeWindow;
+extern pthread_mutex_t stateMutex;
+extern pthread_cond_t  stateCond;
 
-#define PORT "sdl"
-#define LOG_TAG "mGBAMobile"
+extern uint32_t inputKeys;   // written by JNI touch handler, read here each frame
 
-extern char romPath[512];
+// ── Audio ─────────────────────────────────────────────────────────────────────
+static AAudioStream* audioStream = NULL;
 
-static void mSDLDeinit(struct mSDLRenderer* renderer);
-static int mSDLRun(struct mSDLRenderer* renderer, const char* romPath);
-static void mAndroidRunloop(struct mSDLRenderer* renderer, void* user);
-
-static struct mStandardLogger _logger;
-ATTRIBUTE_UNUSED static struct VFile* _state = NULL;
-
-ATTRIBUTE_UNUSED static void _loadState(struct mCoreThread* thread) {
-	mCoreLoadStateNamed(thread->core, _state, SAVESTATE_RTC);
+static aaudio_data_callback_result_t audioCallback(
+        AAudioStream* stream, void* userData,
+        void* audioData, int32_t numFrames) {
+    struct mCore* core = (struct mCore*)userData;
+    // Pull samples from mGBA's audio buffer into AAudio's buffer
+    // mGBA outputs stereo int16 — AAudio stream should be configured the same
+    memset(audioData, 0, numFrames * 2 * sizeof(int16_t));
+    // TODO: use mAudioBuffer or core audio API to fill audioData
+    return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
+static void initAudio(struct mCore* core) {
+    AAudioStreamBuilder* builder;
+    AAudio_createStreamBuilder(&builder);
+    AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_I16);
+    AAudioStreamBuilder_setChannelCount(builder, 2);
+    AAudioStreamBuilder_setSampleRate(builder, 44100);
+    AAudioStreamBuilder_setDataCallback(builder, audioCallback, core);
+    AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_openStream(builder, &audioStream);
+    AAudioStreamBuilder_delete(builder);
+    AAudioStream_requestStart(audioStream);
+}
+
+// ── Scale & draw one frame ────────────────────────────────────────────────────
+static void blitFrame(ANativeWindow* win, uint32_t* src, int winW, int winH) {
+    ANativeWindow_Buffer buf;
+    if (ANativeWindow_lock(win, &buf, NULL) != 0) return;
+
+    uint32_t* dst = (uint32_t*)buf.bits;
+
+    // Integer scale: largest multiple of GBA_W/GBA_H that fits
+    int scaleX = winW / GBA_W;
+    int scaleY = winH / GBA_H;
+    int scale  = scaleX < scaleY ? scaleX : scaleY;
+    if (scale < 1) scale = 1;
+
+    int drawW  = GBA_W * scale;
+    int drawH  = GBA_H * scale;
+    int offX   = (winW - drawW) / 2;
+    int offY   = (winH - drawH) / 2;
+
+    // Clear to black
+    memset(dst, 0, buf.stride * winH * 4);
+
+    // Nearest-neighbor upscale
+    for (int y = 0; y < drawH; y++) {
+        for (int x = 0; x < drawW; x++) {
+            int srcPx = (y / scale) * GBA_W + (x / scale);
+            dst[(y + offY) * buf.stride + (x + offX)] = src[srcPx];
+        }
+    }
+
+    // Draw virtual button outlines (semi-transparent grey overlay)
+    size_t nb = sizeof(gbaButtons) / sizeof(gbaButtons[0]);
+    for (size_t i = 0; i < nb; i++) {
+        // Scale button rects from the 480x540 virtual space to actual window
+        int bx = (int)((float)gbaButtons[i].rect.x / 480 * winW);
+        int by = (int)((float)gbaButtons[i].rect.y / 540 * winH);
+        int bw = (int)((float)gbaButtons[i].rect.w / 480 * winW);
+        int bh = (int)((float)gbaButtons[i].rect.h / 540 * winH);
+        for (int ry = by; ry < by + bh && ry < winH; ry++) {
+            for (int rx = bx; rx < bx + bw && rx < winW; rx++) {
+                // Simple outline only (border pixels)
+                if (rx == bx || rx == bx+bw-1 || ry == by || ry == by+bh-1) {
+                    dst[ry * buf.stride + rx] = 0xAAFFFFFF; // white outline
+                }
+            }
+        }
+    }
+
+    ANativeWindow_unlockAndPost(win);
+}
+
+// ── Main entry ────────────────────────────────────────────────────────────────
 int main(int argc, char** argv) {
-	UNUSED(argc);
-	UNUSED(argv);
+    // Wait until both romPath and nativeWindow are ready
+    pthread_mutex_lock(&stateMutex);
+    while (romPath[0] == '\0' || nativeWindow == NULL) {
+        pthread_cond_wait(&stateCond, &stateMutex);
+    }
+    pthread_mutex_unlock(&stateMutex);
 
-	struct mSDLRenderer renderer = {0};
+    // Find and init the core (handles .gba / .gb / .gbc / .zip / .7z)
+    struct mCore* core = mCoreFind(romPath);
+    if (!core) {
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "No core found for: %s", romPath);
+        return 1;
+    }
+    core->init(core);
 
-	struct mCoreOptions opts = {
-		.useBios = true,
-		.rewindEnable = true,
-		.rewindBufferCapacity = 600,
-		.rewindBufferInterval = 1,
-		.audioBuffers = 1024,
-		.videoSync = false,
-		.audioSync = true,
-		.volume = 0x100,
-		.logLevel = mLOG_WARN | mLOG_ERROR | mLOG_FATAL,
-	};
+    // Software pixel buffer — 240×160 ARGB8888
+    uint32_t* pixelBuf = (uint32_t*)malloc(GBA_W * GBA_H * sizeof(uint32_t));
+    core->setVideoBuffer(core, (mColor*)pixelBuf, GBA_W);
 
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-		__android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Could not initialize video: %s", SDL_GetError());
-		return 1;
-	}
+    // Configure ANativeWindow to ARGB8888 32-bit
+    int winW = ANativeWindow_getWidth(nativeWindow);
+    int winH = ANativeWindow_getHeight(nativeWindow);
+    ANativeWindow_setBuffersGeometry(nativeWindow, winW, winH, WINDOW_FORMAT_RGBX_8888);
 
-	// Wait for romPath to be set by JNI before proceeding
-	while (romPath[0] == '\0') {
-		SDL_Delay(100);
-	}
+    mCoreLoadFile(core, romPath);
+    mCoreAutoloadSave(core);
 
-	renderer.core = mCoreFind(romPath);
-	if (!renderer.core) {
-		__android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Could not run game. Are you sure the file exists and is a compatible game?");
-		return 1;
-	}
+    initAudio(core);
 
-	if (!renderer.core->init(renderer.core)) {
-		return 1;
-	}
+    // Start emulator thread
+    struct mCoreThread thread = { .core = core };
+    mCoreThreadStart(&thread);
 
-	renderer.core->baseVideoSize(renderer.core, &renderer.width, &renderer.height);
-	renderer.ratio = 1;
-	opts.width = renderer.width * renderer.ratio;
-	opts.height = renderer.height * renderer.ratio;
+    // Render loop — runs on this thread
+    while (mCoreThreadIsActive(&thread)) {
+        // Feed input each frame
+        core->setKeys(core, inputKeys);
 
-	mInputMapInit(&renderer.core->inputMap, &GBAInputInfo);
-	mCoreInitConfig(renderer.core, PORT);
+        // blit the current frame to screen
+        blitFrame(nativeWindow, pixelBuf, winW, winH);
 
-	mCoreConfigSetDefaultIntValue(&renderer.core->config, "logToStdout", true);
-	mCoreConfigLoadDefaults(&renderer.core->config, &opts);
-	mCoreLoadConfig(renderer.core);
-	mStandardLoggerInit(&_logger);
-	mStandardLoggerConfig(&_logger, &renderer.core->config);
-	mLogSetDefaultLogger(&_logger.d);
+        // ~60fps cap
+        struct timespec ts = { 0, 16666667L };
+        nanosleep(&ts, NULL);
+    }
 
-	renderer.viewportWidth = renderer.core->opts.width;
-	renderer.viewportHeight = renderer.core->opts.height;
-	renderer.player.fullscreen = renderer.core->opts.fullscreen;
-	renderer.player.windowUpdated = 0;
+    // Cleanup
+    AAudioStream_requestStop(audioStream);
+    AAudioStream_close(audioStream);
+    mCoreThreadJoin(&thread);
+    core->unloadROM(core);
+    core->deinit(core);
+    free(pixelBuf);
+    ANativeWindow_release(nativeWindow);
 
-	renderer.lockAspectRatio = renderer.core->opts.lockAspectRatio;
-	renderer.lockIntegerScaling = renderer.core->opts.lockIntegerScaling;
-	renderer.interframeBlending = renderer.core->opts.interframeBlending;
-	renderer.filter = renderer.core->opts.resampleVideo;
-
-	mSDLSWCreate(&renderer);
-	renderer.runloop = mAndroidRunloop;
-
-	if (!renderer.init(&renderer)) {
-		mCoreConfigDeinit(&renderer.core->config);
-		renderer.core->deinit(renderer.core);
-		return 1;
-	}
-
-	renderer.player.bindings = &renderer.core->inputMap;
-	mSDLInitBindingsGBA(&renderer.core->inputMap);
-	mSDLInitEvents(&renderer.events);
-	mSDLEventsLoadConfig(&renderer.events, mCoreConfigGetInput(&renderer.core->config));
-	mSDLAttachPlayer(&renderer.events, &renderer.player, -1);
-	mSDLPlayerLoadConfig(&renderer.player, mCoreConfigGetInput(&renderer.core->config));
-
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-	renderer.core->setPeripheral(renderer.core, mPERIPH_RUMBLE, &renderer.player.rumble.d.d);
-#endif
-
-	int ret;
-
-	ret = mSDLRun(&renderer, romPath);
-	mSDLDetachPlayer(&renderer.events, &renderer.player);
-	mInputMapDeinit(&renderer.core->inputMap);
-
-	mSDLDeinit(&renderer);
-	mStandardLoggerDeinit(&_logger);
-
-	mCoreConfigFreeOpts(&opts);
-	mCoreConfigDeinit(&renderer.core->config);
-	renderer.core->deinit(renderer.core);
-
-	return ret;
-}
-
-static void mAndroidRunloop(struct mSDLRenderer* renderer, void* user) {
-	struct mCoreThread* context = user;
-	SDL_Event event;
-
-	size_t numButtons = sizeof(gbaButtons) / sizeof(gbaButtons[0]);
-
-	while (mCoreThreadIsActive(context)) {
-		while (SDL_PollEvent(&event)) {
-			if (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERUP) {
-				int winW = renderer->viewportWidth;
-				int winH = renderer->viewportHeight;
-				if (renderer->window) {
-					SDL_GetWindowSize(renderer->window, &winW, &winH);
-				}
-				int touchX = (int)(event.tfinger.x * (event.tfinger.x <= 1.0f ? winW : 1));
-				int touchY = (int)(event.tfinger.y * (event.tfinger.y <= 1.0f ? winH : 1));
-
-				for (size_t i = 0; i < numButtons; ++i) {
-					SDL_Rect r = gbaButtons[i].rect;
-					if (touchX >= r.x && touchX <= r.x + r.w && touchY >= r.y && touchY <= r.y + r.h) {
-						if (event.type == SDL_FINGERDOWN) {
-							context->core->addKeys(context->core, 1 << gbaButtons[i].gbaKey);
-						} else {
-							context->core->clearKeys(context->core, 1 << gbaButtons[i].gbaKey);
-						}
-					}
-				}
-			}
-			mSDLHandleEvent(context, &renderer->player, &event);
-		}
-
-		if (mCoreSyncWaitFrameStart(&context->impl->sync)) {
-			SDL_UnlockTexture(renderer->sdlTex);
-			SDL_RenderCopy(renderer->sdlRenderer, renderer->sdlTex, 0, 0);
-
-			// Draw virtual buttons overlay with 120 alpha
-			SDL_SetRenderDrawBlendMode(renderer->sdlRenderer, SDL_BLENDMODE_BLEND);
-			for (size_t i = 0; i < numButtons; ++i) {
-				SDL_SetRenderDrawColor(renderer->sdlRenderer, 200, 200, 200, 120);
-				SDL_RenderFillRect(renderer->sdlRenderer, &gbaButtons[i].rect);
-			}
-
-			SDL_RenderPresent(renderer->sdlRenderer);
-			int stride;
-			SDL_LockTexture(renderer->sdlTex, 0, (void**) &renderer->outputBuffer, &stride);
-			renderer->core->setVideoBuffer(renderer->core, renderer->outputBuffer, stride / BYTES_PER_PIXEL);
-		}
-		mCoreSyncWaitFrameEnd(&context->impl->sync);
-	}
-}
-
-int mSDLRun(struct mSDLRenderer* renderer, const char* romPath) {
-	struct mCoreThread thread = {
-		.core = renderer->core
-	};
-	if (!mCoreLoadFile(renderer->core, romPath)) {
-		return 1;
-	}
-	mCoreAutoloadSave(renderer->core);
-
-	renderer->audio.samples = renderer->core->opts.audioBuffers;
-	renderer->audio.sampleRate = 44100;
-	thread.logger.logger = &_logger.d;
-
-	bool didFail = !mCoreThreadStart(&thread);
-
-	if (!didFail) {
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-		renderer->core->currentVideoSize(renderer->core, &renderer->width, &renderer->height);
-		unsigned width = renderer->width * renderer->ratio;
-		unsigned height = renderer->height * renderer->ratio;
-		if (width != (unsigned) renderer->viewportWidth && height != (unsigned) renderer->viewportHeight) {
-			SDL_SetWindowSize(renderer->window, width, height);
-			renderer->player.windowUpdated = 1;
-		}
-		mSDLSetScreensaverSuspendable(&renderer->events, renderer->core->opts.suspendScreensaver);
-		mSDLSuspendScreensaver(&renderer->events);
-#endif
-		if (mSDLInitAudio(&renderer->audio, &thread)) {
-			renderer->runloop(renderer, &thread);
-			mSDLPauseAudio(&renderer->audio);
-			if (mCoreThreadHasCrashed(&thread)) {
-				didFail = true;
-				__android_log_print(ANDROID_LOG_INFO, LOG_TAG, "The game crashed!");
-				mCoreThreadEnd(&thread);
-			}
-		} else {
-			didFail = true;
-			__android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Could not initialize audio.");
-		}
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-		mSDLResumeScreensaver(&renderer->events);
-		mSDLSetScreensaverSuspendable(&renderer->events, false);
-#endif
-
-		mCoreThreadJoin(&thread);
-	} else {
-		__android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Could not run game. Are you sure the file exists and is a compatible game?");
-	}
-	renderer->core->unloadROM(renderer->core);
-
-	return didFail;
-}
-
-static void mSDLDeinit(struct mSDLRenderer* renderer) {
-	mSDLDeinitEvents(&renderer->events);
-	mSDLDeinitAudio(&renderer->audio);
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-	SDL_DestroyWindow(renderer->window);
-#endif
-
-	renderer->deinit(renderer);
-
-	SDL_Quit();
+    return 0;
 }
