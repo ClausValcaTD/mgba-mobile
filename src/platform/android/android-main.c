@@ -11,6 +11,7 @@ typedef struct { int x, y, w, h; } SDL_Rect;
 #include <mgba/core/core.h>
 #include <mgba/core/thread.h>
 #include <mgba/core/serialize.h>
+#include <mgba/core/blip_buf.h>
 #include <mgba/internal/gba/input.h>
 #include <aaudio/AAudio.h>
 
@@ -35,10 +36,14 @@ static aaudio_data_callback_result_t audioCallback(
         AAudioStream* stream, void* userData,
         void* audioData, int32_t numFrames) {
     struct mCore* core = (struct mCore*)userData;
-    // Pull samples from mGBA's audio buffer into AAudio's buffer
-    // mGBA outputs stereo int16 — AAudio stream should be configured the same
-    memset(audioData, 0, numFrames * 2 * sizeof(int16_t));
-    // TODO: use mAudioBuffer or core audio API to fill audioData
+    struct mAVStream* avStream = core->getAVStream(core);
+    if (avStream && avStream->postAudioBuffer) {
+        // Pull samples directly from mGBA's blip buffer
+        blip_read_samples(core->getAudioChannel(core, 0),
+                          (short*)audioData, numFrames, true);
+    } else {
+        memset(audioData, 0, numFrames * 2 * sizeof(int16_t));
+    }
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 
@@ -106,7 +111,7 @@ static void blitFrame(ANativeWindow* win, uint32_t* src, int winW, int winH) {
 }
 
 // ── Main entry ────────────────────────────────────────────────────────────────
-int main(int argc, char** argv) {
+int emulatorMain(void) {
     // Wait until both romPath and nativeWindow are ready
     pthread_mutex_lock(&stateMutex);
     while (romPath[0] == '\0' || nativeWindow == NULL) {

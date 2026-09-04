@@ -70,3 +70,16 @@ Java_com_m5dev_mgbamobile_MainActivity_onTouch(JNIEnv* env, jobject obj,
         }
     }
 }
+
+static void* emulationThread(void* arg) {
+    extern int emulatorMain(void); // defined in android-main.c
+    emulatorMain();
+    return NULL;
+}
+
+jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    pthread_t thread;
+    pthread_create(&thread, NULL, emulationThread, NULL);
+    pthread_detach(thread);
+    return JNI_VERSION_1_6;
+}
