@@ -1,7 +1,10 @@
 #ifndef VIRTUAL_BUTTONS_H
 #define VIRTUAL_BUTTONS_H
 
-#include <SDL.h>
+#ifndef SDL_Rect
+typedef struct { int x, y, w, h; } SDL_Rect;
+#define SDL_Rect SDL_Rect
+#endif
 #include <mgba/internal/gba/input.h>
 
 typedef struct {

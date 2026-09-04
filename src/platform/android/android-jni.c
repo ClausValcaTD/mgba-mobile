@@ -5,9 +5,6 @@
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
 
-// Replace SDL_Rect with this — identical memory layout
-typedef struct { int x, y, w, h; } SDL_Rect;
-
 #include <mgba/internal/gba/input.h>
 #include "overlay/virtual_buttons.h"
 
