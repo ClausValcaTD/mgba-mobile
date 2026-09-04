@@ -8,7 +8,7 @@
 #include <mgba/core/core.h>
 #include <mgba/core/thread.h>
 #include <mgba/core/serialize.h>
-#include "util/audio/blip_buf.h"
+#include <mgba-util/audio-buffer.h>
 #include <mgba/internal/gba/input.h>
 #include <aaudio/AAudio.h>
 
@@ -33,11 +33,15 @@ static aaudio_data_callback_result_t audioCallback(
         AAudioStream* stream, void* userData,
         void* audioData, int32_t numFrames) {
     struct mCore* core = (struct mCore*)userData;
-    struct mAVStream* avStream = core->getAVStream(core);
-    if (avStream && avStream->postAudioBuffer) {
-        // Pull samples directly from mGBA's blip buffer
-        blip_read_samples(core->getAudioChannel(core, 0),
-                          (short*)audioData, numFrames, true);
+    struct mAudioBuffer* audioBuf = core->getAudioBuffer(core);
+    if (audioBuf) {
+        size_t available = mAudioBufferAvailable(audioBuf);
+        size_t toRead = available < (size_t)numFrames ? available : (size_t)numFrames;
+        mAudioBufferRead(audioBuf, (int16_t*)audioData, toRead);
+        if (toRead < (size_t)numFrames) {
+            memset((int16_t*)audioData + toRead * 2, 0,
+                   (numFrames - toRead) * 2 * sizeof(int16_t));
+        }
     } else {
         memset(audioData, 0, numFrames * 2 * sizeof(int16_t));
     }
