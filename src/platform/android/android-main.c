@@ -12,6 +12,7 @@
 #include <time.h>
 
 #include <mgba/core/core.h>
+#include <mgba/core/serialize.h>
 #include <mgba-util/audio-buffer.h>
 #include <mgba/internal/gba/input.h>
 
