@@ -21,11 +21,6 @@
 #define GBA_W   240
 #define GBA_H   160
 
-#define mLog android_mLog
-
-// Defined in android-jni.c
-extern void mLog(const char* level, const char* tag, const char* fmt, ...);
-
 /* ── Shared state (written by android-jni.c) ─────────────────────────────── */
 extern char             romPath[512];
 extern ANativeWindow*   nativeWindow;
@@ -67,7 +62,7 @@ static void initAudio(struct mCore* core) {
     AAudioStreamBuilder* builder = NULL;
     aaudio_result_t res = AAudio_createStreamBuilder(&builder);
     if (res != AAUDIO_OK || !builder) {
-        mLog("W", LOG_TAG, "AAudio builder failed: %d", res);
+        __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "AAudio builder failed: %d", res);
         return;
     }
     AAudioStreamBuilder_setFormat(builder,          AAUDIO_FORMAT_PCM_I16);
@@ -80,12 +75,12 @@ static void initAudio(struct mCore* core) {
     AAudioStreamBuilder_delete(builder);
 
     if (res != AAUDIO_OK || !audioStream) {
-        mLog("W", LOG_TAG, "AAudio open failed: %d", res);
+        __android_log_print(ANDROID_LOG_WARN, LOG_TAG, "AAudio open failed: %d", res);
         audioStream = NULL;
         return;
     }
     AAudioStream_requestStart(audioStream);
-    mLog("I", LOG_TAG, "AAudio started");
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "AAudio started");
 }
 
 static void stopAudio(void) {
@@ -148,9 +143,10 @@ static void blitFrame(ANativeWindow* win, const uint32_t* src, int winW, int win
 /* ── Main emulator entry (called from emulationThread in android-jni.c) ──── */
 int emulatorMain(void) {
 
-    /* 1. Wait for both romPath and nativeWindow */
+    /* 1. Wait until file copy is done AND surface is ready */
+    extern int romReady;
     pthread_mutex_lock(&stateMutex);
-    while (romPath[0] == '\0' || nativeWindow == NULL) {
+    while (!romReady || nativeWindow == NULL) {
         pthread_cond_wait(&stateCond, &stateMutex);
     }
     /* Take local copies while holding the lock */
@@ -160,21 +156,20 @@ int emulatorMain(void) {
     localRom[sizeof(localRom) - 1] = '\0';
     pthread_mutex_unlock(&stateMutex);
 
-    mLog("I", LOG_TAG, "Starting emulator: %s", localRom);
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Starting emulator: %s", localRom);
 
     /* 2. Find core */
     struct mCore* core = mCoreFind(localRom);
     if (!core) {
-        mLog("E", LOG_TAG, "No core for: %s", localRom);
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "No core for: %s", localRom);
         return 1;
     }
 
     /* 3. Init core */
     if (!core->init(core)) {
-        mLog("E", LOG_TAG, "core->init failed");
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "core->init failed");
         return 1;
     }
-    mLog("I", LOG_TAG, "core init OK");
 
     /* 4. Pixel buffer */
     uint32_t* pixelBuf = (uint32_t*)calloc(GBA_W * GBA_H, sizeof(uint32_t));
@@ -191,23 +186,21 @@ int emulatorMain(void) {
 
     /* 6. Load ROM */
     if (!mCoreLoadFile(core, localRom)) {
-        mLog("E", LOG_TAG, "mCoreLoadFile failed: %s", localRom);
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "mCoreLoadFile failed: %s", localRom);
         core->deinit(core);
         free(pixelBuf);
         return 1;
     }
-    mLog("I", LOG_TAG, "ROM loaded OK");
     mCoreAutoloadSave(core);
 
     /* 7. Reset */
     core->reset(core);
-    mLog("I", LOG_TAG, "core reset OK, entering game loop");
 
     /* 8. Audio */
     initAudio(core);
 
     /* 9. Game loop — single threaded, no data race */
-    mLog("I", LOG_TAG, "Entering game loop %dx%d", winW, winH);
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Entering game loop %dx%d", winW, winH);
 
     struct timespec ts = { 0, 16666667L }; /* ~60 fps */
 
@@ -227,18 +220,12 @@ int emulatorMain(void) {
         /* Draw */
         blitFrame(win, pixelBuf, winW, winH);
 
-        static int firstFrame = 1;
-        if (firstFrame) {
-            mLog("I", LOG_TAG, "First frame rendered OK");
-            firstFrame = 0;
-        }
-
         /* Cap to ~60fps */
         nanosleep(&ts, NULL);
     }
 
     /* 10. Cleanup */
-    mLog("I", LOG_TAG, "Emulator stopping");
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "Emulator stopping");
     stopAudio();
     core->unloadROM(core);
     core->deinit(core);
