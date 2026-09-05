@@ -32,7 +32,6 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
         initLogger()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // Root layout: SurfaceView + overlay text
         val root = android.widget.FrameLayout(this)
 
         surfaceView = SurfaceView(this)
@@ -61,8 +60,11 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     private fun initLogger() {
         if (android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P) {
-            if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 100)
+            if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(
+                    arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 100
+                )
             }
         }
         val logFile = getObbDir().absolutePath + "/mgba.log"
@@ -71,7 +73,15 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     private fun copyAndLoad(uri: Uri) {
         Thread {
-            val dest = File(cacheDir, "current_rom.bin")
+            // احتفظ بالـ extension الأصلي عشان mCoreFind يعرف الـ core
+            val originalName = uri.lastPathSegment
+                ?.substringAfterLast('/')
+                ?: "rom.gba"
+            val ext = originalName
+                .substringAfterLast('.', "gba")
+                .lowercase()
+
+            val dest = File(cacheDir, "current_rom.$ext")
             contentResolver.openInputStream(uri)?.use { input ->
                 dest.outputStream().use { output -> input.copyTo(output) }
             }
