@@ -1,6 +1,8 @@
 #include <jni.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <stdarg.h>
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
@@ -9,6 +11,44 @@
 #include "overlay/virtual_buttons.h"
 
 #define LOG_TAG "mGBAMobileJNI"
+
+#define mLog android_mLog
+
+static FILE* logFile = NULL;
+
+void mLog(const char* level, const char* tag, const char* fmt, ...) {
+    va_list args;
+
+    // Always log to logcat
+    va_start(args, fmt);
+    __android_log_vprint(
+        strcmp(level, "E") == 0 ? ANDROID_LOG_ERROR :
+        strcmp(level, "W") == 0 ? ANDROID_LOG_WARN  : ANDROID_LOG_INFO,
+        tag, fmt, args);
+    va_end(args);
+
+    // Also write to file if open
+    if (logFile) {
+        va_start(args, fmt);
+        fprintf(logFile, "[%s/%s] ", level, tag);
+        vfprintf(logFile, fmt, args);
+        fprintf(logFile, "\n");
+        fflush(logFile);
+        va_end(args);
+    }
+}
+
+JNIEXPORT void JNICALL
+Java_com_m5dev_mgbamobile_MainActivity_setLogFile(JNIEnv* env, jobject obj, jstring path) {
+    const char* str = (*env)->GetStringUTFChars(env, path, NULL);
+    if (logFile) fclose(logFile);
+    logFile = fopen(str, "w");
+    if (logFile) {
+        fprintf(logFile, "=== mGBA Mobile Log ===\n");
+        fflush(logFile);
+    }
+    (*env)->ReleaseStringUTFChars(env, path, str);
+}
 
 // Shared state — read by android-main.c
 char romPath[512] = {0};
@@ -29,7 +69,7 @@ Java_com_m5dev_mgbamobile_MainActivity_loadROM(JNIEnv* env, jobject obj, jstring
     pthread_cond_signal(&stateCond);
     pthread_mutex_unlock(&stateMutex);
     (*env)->ReleaseStringUTFChars(env, path, str);
-    __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "ROM path: %s", romPath);
+    mLog("I", LOG_TAG, "ROM path: %s", romPath);
 }
 
 // Called from MainActivity.surfaceCreated()

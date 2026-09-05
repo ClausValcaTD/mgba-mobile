@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        initLogger()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         // Root layout: SurfaceView + overlay text
@@ -56,6 +57,18 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
 
         setContentView(root)
         pickRom.launch(arrayOf("*/*"))
+    }
+
+    private fun initLogger() {
+        if (android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P) {
+            if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 100)
+            }
+        }
+        // Writes to /sdcard/mgba-mobile.log — visible in any file manager
+        val logFile = android.os.Environment.getExternalStorageDirectory()
+            .absolutePath + "/mgba-mobile.log"
+        setLogFile(logFile)
     }
 
     private fun copyAndLoad(uri: Uri) {
@@ -89,6 +102,7 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
     }
 
     // JNI declarations
+    external fun setLogFile(path: String)
     external fun loadROM(path: String)
     external fun setSurface(surface: Surface?)
     external fun onTouch(x: Int, y: Int, down: Boolean, surfaceW: Int, surfaceH: Int)
