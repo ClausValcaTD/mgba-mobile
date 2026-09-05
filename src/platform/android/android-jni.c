@@ -50,7 +50,7 @@ Java_com_m5dev_mgbamobile_MainActivity_setLogFile(JNIEnv* env, jobject obj, jstr
 /* ── Shared state ─────────────────────────────────────────────────────────── */
 char            romPath[512]  = {0};
 ANativeWindow*  nativeWindow  = NULL;
-static int      romReady      = 0;  /* 1 = file copy complete, safe to open */
+int             romReady      = 0;  /* 1 = file copy complete, safe to open */
 
 pthread_mutex_t stateMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  stateCond  = PTHREAD_COND_INITIALIZER;
@@ -58,9 +58,6 @@ pthread_cond_t  stateCond  = PTHREAD_COND_INITIALIZER;
 uint32_t inputKeys = 0;
 
 /* ── JNI handlers ────────────────────────────────────────────────────────── */
-
-JNIEXPORT void JNICALL
-Java_com_m5dev_mgbamobile_MainActivity_setLogFile(JNIEnv* env, jobject obj, jstring path);
 
 JNIEXPORT void JNICALL
 Java_com_m5dev_mgbamobile_MainActivity_loadROM(JNIEnv* env, jobject obj, jstring path) {
