@@ -65,9 +65,7 @@ class MainActivity : ComponentActivity(), SurfaceHolder.Callback {
                 requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 100)
             }
         }
-        // Writes to /sdcard/mgba-mobile.log — visible in any file manager
-        val logFile = android.os.Environment.getExternalStorageDirectory()
-            .absolutePath + "/mgba-mobile.log"
+        val logFile = getObbDir().absolutePath + "/mgba.log"
         setLogFile(logFile)
     }
 
