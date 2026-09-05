@@ -11,15 +11,13 @@
 #include "overlay/virtual_buttons.h"
 
 #define LOG_TAG "mGBAMobileJNI"
-
 #define mLog android_mLog
 
+/* ── File logger ─────────────────────────────────────────────────────────── */
 static FILE* logFile = NULL;
 
 void mLog(const char* level, const char* tag, const char* fmt, ...) {
     va_list args;
-
-    // Always log to logcat
     va_start(args, fmt);
     __android_log_vprint(
         strcmp(level, "E") == 0 ? ANDROID_LOG_ERROR :
@@ -27,7 +25,6 @@ void mLog(const char* level, const char* tag, const char* fmt, ...) {
         tag, fmt, args);
     va_end(args);
 
-    // Also write to file if open
     if (logFile) {
         va_start(args, fmt);
         fprintf(logFile, "[%s/%s] ", level, tag);
@@ -50,29 +47,34 @@ Java_com_m5dev_mgbamobile_MainActivity_setLogFile(JNIEnv* env, jobject obj, jstr
     (*env)->ReleaseStringUTFChars(env, path, str);
 }
 
-// Shared state — read by android-main.c
-char romPath[512] = {0};
-ANativeWindow* nativeWindow = NULL;
+/* ── Shared state ─────────────────────────────────────────────────────────── */
+char            romPath[512]  = {0};
+ANativeWindow*  nativeWindow  = NULL;
+static int      romReady      = 0;  /* 1 = file copy complete, safe to open */
 
 pthread_mutex_t stateMutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  stateCond  = PTHREAD_COND_INITIALIZER;
 
 uint32_t inputKeys = 0;
 
-// Called from MainActivity after copying ROM to cache
+/* ── JNI handlers ────────────────────────────────────────────────────────── */
+
+JNIEXPORT void JNICALL
+Java_com_m5dev_mgbamobile_MainActivity_setLogFile(JNIEnv* env, jobject obj, jstring path);
+
 JNIEXPORT void JNICALL
 Java_com_m5dev_mgbamobile_MainActivity_loadROM(JNIEnv* env, jobject obj, jstring path) {
     const char* str = (*env)->GetStringUTFChars(env, path, NULL);
     pthread_mutex_lock(&stateMutex);
     strncpy(romPath, str, sizeof(romPath) - 1);
     romPath[sizeof(romPath) - 1] = '\0';
+    romReady = 1;  /* file copy is done, safe to open now */
     pthread_cond_signal(&stateCond);
     pthread_mutex_unlock(&stateMutex);
     (*env)->ReleaseStringUTFChars(env, path, str);
-    mLog("I", LOG_TAG, "ROM path: %s", romPath);
+    mLog("I", LOG_TAG, "ROM ready: %s", romPath);
 }
 
-// Called from MainActivity.surfaceCreated()
 JNIEXPORT void JNICALL
 Java_com_m5dev_mgbamobile_MainActivity_setSurface(JNIEnv* env, jobject obj, jobject surface) {
     pthread_mutex_lock(&stateMutex);
@@ -80,36 +82,32 @@ Java_com_m5dev_mgbamobile_MainActivity_setSurface(JNIEnv* env, jobject obj, jobj
     nativeWindow = surface ? ANativeWindow_fromSurface(env, surface) : NULL;
     pthread_cond_signal(&stateCond);
     pthread_mutex_unlock(&stateMutex);
+    mLog("I", LOG_TAG, "Surface %s", nativeWindow ? "set" : "cleared");
 }
 
-// Called from MainActivity on touch events
 JNIEXPORT void JNICALL
 Java_com_m5dev_mgbamobile_MainActivity_onTouch(JNIEnv* env, jobject obj,
                                                 jint x, jint y, jboolean down,
                                                 jint surfaceW, jint surfaceH) {
     if (surfaceW <= 0 || surfaceH <= 0) return;
 
-    // Scale touch coords from surface size to the virtual button coordinate space (480x540)
-    // virtual_buttons.h uses fixed pixel coords designed for ~480px wide layout
     int vx = (int)((float)x / surfaceW * 480);
     int vy = (int)((float)y / surfaceH * 540);
 
     size_t numButtons = sizeof(gbaButtons) / sizeof(gbaButtons[0]);
     for (size_t i = 0; i < numButtons; i++) {
-        // SDL_Rect has x,y,w,h — reuse the struct directly, no SDL needed at runtime
         int rx = gbaButtons[i].rect.x, ry = gbaButtons[i].rect.y;
         int rw = gbaButtons[i].rect.w, rh = gbaButtons[i].rect.h;
         if (vx >= rx && vx <= rx + rw && vy >= ry && vy <= ry + rh) {
-            // Store key state — android-main.c reads this each frame
-            // Use a simple bitmask array indexed by gbaKey
             if (down) inputKeys |=  (1u << gbaButtons[i].gbaKey);
             else       inputKeys &= ~(1u << gbaButtons[i].gbaKey);
         }
     }
 }
 
+/* ── Emulation thread ────────────────────────────────────────────────────── */
 static void* emulationThread(void* arg) {
-    extern int emulatorMain(void); // defined in android-main.c
+    extern int emulatorMain(void);
     emulatorMain();
     return NULL;
 }
